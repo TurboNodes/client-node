@@ -51,9 +51,31 @@ export default function TurboNodeDashboard() {
   const [earningsHistory, setEarningsHistory] = useState<EarningsDay[]>(
     generateMockEarningsHistory()
   );
+  const [wsConnectionStatus, setWsConnectionStatus] = useState<string>("disconnected");
+  const [isWebSocketEnabled, setIsWebSocketEnabled] = useState(true);
   const { isConnected } = useAccount();
 
   const webSocket = useWebSocket("ws://localhost:8766");
+
+  // Stabilize WebSocket connection status
+  useEffect(() => {
+    let statusTimeout: NodeJS.Timeout;
+    
+    const updateConnectionStatus = (status: string) => {
+      clearTimeout(statusTimeout);
+      statusTimeout = setTimeout(() => {
+        setWsConnectionStatus(status);
+      }, 100); // Small delay to prevent rapid state changes
+    };
+
+    if (isWebSocketEnabled) {
+      updateConnectionStatus(webSocket.connectionStatus);
+    } else {
+      updateConnectionStatus("disconnected");
+    }
+
+    return () => clearTimeout(statusTimeout);
+  }, [webSocket.connectionStatus, isWebSocketEnabled]);
 
   useEffect(() => {
     if (webSocket.lastMessage) {
@@ -81,12 +103,14 @@ export default function TurboNodeDashboard() {
   }, [webSocket.lastMessage]);
 
   useEffect(() => {
-    webSocket.connect();
+    if (isWebSocketEnabled) {
+      webSocket.connect();
+    }
 
     return () => {
       webSocket.disconnect();
     };
-  }, [webSocket]);
+  }, [webSocket, isWebSocketEnabled]);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -103,13 +127,23 @@ export default function TurboNodeDashboard() {
   }, []);
 
   const getWebSocketStatusIcon = () => {
-    switch (webSocket.connectionStatus) {
+    switch (wsConnectionStatus) {
       case "connected":
         return <Wifi className="w-4 h-4 text-green-500" />;
       case "connecting":
         return <Wifi className="w-4 h-4 text-yellow-500 animate-pulse" />;
       default:
         return <WifiOff className="w-4 h-4 text-red-500" />;
+    }
+  };
+
+  const handleWebSocketToggle = () => {
+    if (wsConnectionStatus === "connected") {
+      setIsWebSocketEnabled(false);
+      webSocket.disconnect();
+    } else {
+      setIsWebSocketEnabled(true);
+      webSocket.connect();
     }
   };
 
@@ -125,8 +159,8 @@ export default function TurboNodeDashboard() {
               <h1 className="text-xl font-bold">Turbo Node Dashboard</h1>
               <div className="flex items-center gap-2 ml-4">
                 {getWebSocketStatusIcon()}
-                <span className="text-sm text-gray-400">
-                  {webSocket.connectionStatus}
+                <span className="text-sm text-gray-400 min-w-[80px]">
+                  {wsConnectionStatus}
                 </span>
               </div>
             </div>
@@ -147,7 +181,7 @@ export default function TurboNodeDashboard() {
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="mb-8">
           <div
-            className={`p-4 rounded-xl border ${
+            className={`p-4 rounded-xl border transition-all duration-300 ${
               nodeStats.isConnected
                 ? "bg-green-500/10 border-green-500/30"
                 : "bg-red-500/10 border-red-500/30"
@@ -156,7 +190,7 @@ export default function TurboNodeDashboard() {
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <div
-                  className={`w-3 h-3 rounded-full ${
+                  className={`w-3 h-3 rounded-full transition-colors duration-300 ${
                     nodeStats.isConnected ? "bg-green-500" : "bg-red-500"
                   }`}
                 ></div>
@@ -171,7 +205,7 @@ export default function TurboNodeDashboard() {
                   </p>
                 </div>
               </div>
-              <button className="text-gray-400 hover:text-white">
+              <button className="text-gray-400 hover:text-white transition-colors">
                 <Settings size={20} />
               </button>
             </div>
@@ -225,15 +259,12 @@ export default function TurboNodeDashboard() {
                 <Settings size={18} />
               </button>
               <button
-                onClick={() =>
-                  webSocket.connectionStatus === "connected"
-                    ? webSocket.disconnect()
-                    : webSocket.connect()
-                }
+                onClick={handleWebSocketToggle}
                 className="w-full flex items-center justify-between p-3 bg-gray-800 hover:bg-gray-700 rounded-lg transition-all text-white"
+                disabled={wsConnectionStatus === "connecting"}
               >
                 <span>
-                  {webSocket.connectionStatus === "connected"
+                  {wsConnectionStatus === "connected"
                     ? "Disconnect"
                     : "Connect"}{" "}
                   WebSocket
