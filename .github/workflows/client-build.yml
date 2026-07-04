@@ -3,12 +3,14 @@ name: Build Client
 on:
   push:
     branches: [ main ]
-    paths:
-      - 'client/**'
+    paths-ignore:
+      - README.md
+      - .github/**
   pull_request:
     branches: [ main ]
-    paths:
-      - 'client/**'
+    paths-ignore:
+      - README.md
+      - .github/**
   release:
     types: [published]
 
@@ -73,7 +75,6 @@ jobs:
         GOARCH: ${{ matrix.goarch }}
       run: |
         mkdir -p dist
-        cd client
         go build -ldflags="-H windowsgui -s -w" -o ../dist/${{ matrix.output_name }}
 
     - name: Create Windows Installer
@@ -92,7 +93,6 @@ jobs:
         sudo apt-get install gcc libgtk-3-dev libayatana-appindicator3-dev
         
         mkdir -p dist
-        cd client
         go build -ldflags="-s -w" -o ../dist/${{ matrix.output_name }}
 
     - name: Build macOS
@@ -102,7 +102,6 @@ jobs:
         GOARCH: ${{ matrix.goarch }}
       run: |
         mkdir -p dist
-        cd client
         go build -ldflags="-s -w" -o ../build/${{ matrix.output_name }}
         
         cd ../
