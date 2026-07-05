@@ -22,7 +22,7 @@ type GitHubRelease struct {
 	} `json:"assets"`
 }
 
-const url = "https://api.github.com/repos/L1shed/Turbo/releases/latest"
+const url = "https://api.github.com/repos/TurboNodes/client-node/releases/latest"
 
 func AutoUpdate() error {
 	client := http.Client{
