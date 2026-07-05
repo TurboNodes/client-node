@@ -1,8 +1,18 @@
 package update
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"syscall"
+)
 
-func replaceExecutable(newBinary []byte, expectedSHA256 string) error {
+const NewSuffix = ".new"
+
+func replaceExecutable(newBinary []byte) error {
 	if runtime.GOOS != "windows" {
 		return errors.New("windows updater called on non-windows system")
 	}
@@ -16,9 +26,9 @@ func replaceExecutable(newBinary []byte, expectedSHA256 string) error {
 	exeName := filepath.Base(exePath)
 
 	// Verify integrity FIRST
-	//if err := verifySHA256(newBinary, expectedSHA256); err != nil {
-	//	return err
-	//}
+	// if err := verifySHA256(newBinary, expectedSHA256); err != nil {
+	// 	return err
+	// }
 
 	// Write new binary
 	if err = writeNewExecutable(dir, exeName, newBinary); err != nil {
