@@ -5,12 +5,10 @@ on:
     branches: [ main ]
     paths-ignore:
       - README.md
-      - .github/**
   pull_request:
     branches: [ main ]
     paths-ignore:
       - README.md
-      - .github/**
   release:
     types: [published]
 
@@ -41,13 +39,13 @@ jobs:
             output_name: turbo-client
             asset_name: Turbo_linux-amd64
 
-          - os: ubuntu-24.04-arm
+          - os: ubuntu-latest
             goos: linux
             goarch: arm64
             output_name: turbo-client
             asset_name: Turbo_linux-arm64
 
-          - os: macos-13
+          - os: macos-lastest
             goos: darwin
             goarch: amd64
             output_name: Turbo
