@@ -33,7 +33,7 @@ jobs:
             output_name: Turbo.exe
             asset_name: Turbo_windows-arm64.exe
 
-          - os: ubuntu-latest
+          - os: ubuntu-24.04-arm
             goos: linux
             goarch: amd64
             output_name: turbo-client
@@ -45,7 +45,7 @@ jobs:
             output_name: turbo-client
             asset_name: Turbo_linux-arm64
 
-          - os: macos-lastest
+          - os: macos-latest
             goos: darwin
             goarch: amd64
             output_name: Turbo
