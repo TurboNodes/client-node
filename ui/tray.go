@@ -24,19 +24,25 @@ func SetupTray(websiteUrl string, icon []byte) {
 		for {
 			select {
 			case <-connect.ClickedCh:
-				port := quic.UIDCollector()
-				err := open(websiteUrl + "/desktop-auth/check?port=" + port)
-				if err != nil {
+				url := quic.PairingURL()
+				if url == "" {
+					if err := quic.SendMessage(&quic.Message{Type: "start_pairing"}); err != nil {
+						log.Println("Connect:", err)
+					}
+					continue
+				}
+				if err := open(url); err != nil {
+					log.Println("Failed to open browser:", err)
+					continue
+				}
+				connect.Hide()
+				dashboard.Show()
+
+			case <-dashboard.ClickedCh:
+				if err := open(websiteUrl + "/dashboard"); err != nil {
 					log.Println("Failed to open browser:", err)
 				}
 
-				connect.Hide()
-				dashboard.Show()
-			case <-dashboard.ClickedCh:
-				err := open(websiteUrl + "/dashboard")
-				if err != nil {
-					log.Println("Failed to open browser:", err)
-				}
 			case <-quitItem.ClickedCh:
 				systray.Quit()
 				return

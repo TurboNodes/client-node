@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"strconv"
 	"sync"
 	"time"
 
@@ -108,6 +109,11 @@ func quicReader(stream *quic.Stream) {
 			}
 			clientMutex.Unlock()
 
+			quicMutex.Lock()
+			quicStream = nil
+			quicConn = nil
+			quicMutex.Unlock()
+
 			return
 		}
 
@@ -137,10 +143,13 @@ func quicReader(stream *quic.Stream) {
 			err := SendMessage(&Message{
 				Type: "pong",
 				ID:   msg.ID,
+				Data: strconv.FormatInt(time.Now().UnixMicro(), 10),
 			})
 			if err != nil {
 				log.Fatal("error sending pong:", err)
 			}
+		case "pairing_url":
+			handlePairingURL(msg)
 		}
 	}
 }
