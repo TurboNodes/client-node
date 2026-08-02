@@ -2,7 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/.idea/Turbo.iml" filepath="$PROJECT_DIR$/.idea/Turbo.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/client-node.iml" filepath="$PROJECT_DIR$/.idea/client-node.iml" />
     </modules>
   </component>
 </project>
