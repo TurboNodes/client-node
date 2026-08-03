@@ -45,7 +45,7 @@ jobs:
             output_name: turbo-client
             asset_name: Turbo_linux-arm64
 
-          - os: macos-13
+          - os: macos-15
             goos: darwin
             goarch: amd64
             output_name: Turbo
