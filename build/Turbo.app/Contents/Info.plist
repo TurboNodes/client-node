@@ -18,6 +18,9 @@
     <string>1.0</string> <!-- TODO: Manage versioning -->
     <key>CFBundleVersion</key>
     <string>1</string> <!-- TODO: Manage versioning -->
+    <!-- Menu-bar app: no Dock icon, no Cmd-Tab entry. The process also sets an
+         accessory activation policy at runtime, but declaring it here avoids a
+         Dock icon flickering in and out during launch. -->
     <key>LSUIElement</key>
     <true/>
     <key>NSHighResolutionCapable</key>

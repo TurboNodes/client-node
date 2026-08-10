@@ -8,7 +8,6 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>~/Applications/Turbo.app/Contents/MacOS/Turbo</string>
         <string>{executable_path}</string>
     </array>
 

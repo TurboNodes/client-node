@@ -1,69 +1,79 @@
 package ui
 
 import (
-	"client/quic"
-	"log"
-	"os/exec"
-	"runtime"
+	"sync"
 
-	"github.com/getlantern/systray"
+	"fyne.io/systray"
 )
 
-func SetupTray(websiteUrl string, icon []byte) {
+var (
+	trayMu     sync.Mutex
+	trayHidden bool
+)
+
+// SetupTray creates the tray icon and its menu, and wires the popup to it.
+//
+// Left click toggles the popup. Right click opens the menu — fyne falls back
+// to showing the menu whenever no secondary handler is registered, so the menu
+// stays reachable on every platform without extra plumbing.
+func SetupTray(icon []byte, onQuit func()) {
 	systray.SetTemplateIcon(icon, icon)
 	systray.SetTooltip("Turbo running")
 
-	connect := systray.AddMenuItem("Connect", "Connect with your account")
-	dashboard := systray.AddMenuItem("Dashboard", "Open dashboard")
+	// "Open" duplicates the left-click gesture. It exists because on Linux the
+	// icon is a StatusNotifierItem and whether a left click is delivered at all
+	// is up to the desktop environment; the menu is the one path that always
+	// works.
+	openItem := systray.AddMenuItem("Open", "Show the Turbo popup")
+	hideItem := systray.AddMenuItem("Hide icon", "Run in the background with no tray icon")
 	systray.AddSeparator()
-	quitItem := systray.AddMenuItem("Quit", "Quit the whole app")
+	quitItem := systray.AddMenuItem("Quit", "Quit Turbo")
 
-	dashboard.Hide()
+	systray.SetOnTapped(TogglePopup)
+
+	StartPopup(onQuit, HideToStealth)
 
 	go func() {
 		for {
 			select {
-			case <-connect.ClickedCh:
-				url := quic.PairingURL()
-				if url == "" {
-					if err := quic.SendMessage(&quic.Message{Type: "start_pairing"}); err != nil {
-						log.Println("Connect:", err)
-					}
-					continue
-				}
-				if err := open(url); err != nil {
-					log.Println("Failed to open browser:", err)
-					continue
-				}
-				connect.Hide()
-				dashboard.Show()
-
-			case <-dashboard.ClickedCh:
-				if err := open(websiteUrl + "/dashboard"); err != nil {
-					log.Println("Failed to open browser:", err)
-				}
-
+			case <-openItem.ClickedCh:
+				ShowPopup()
+			case <-hideItem.ClickedCh:
+				HideToStealth()
 			case <-quitItem.ClickedCh:
-				systray.Quit()
+				if onQuit != nil {
+					onQuit()
+				} else {
+					systray.Quit()
+				}
 				return
 			}
 		}
 	}()
 }
 
-func open(url string) error {
-	var cmd string
-	var args []string
+// HideToStealth removes the tray icon and popup, leaving the node running with
+// no visible presence. The app is brought back by launching it again, which the
+// single-instance guard turns into a "reveal" of the process already running.
+func HideToStealth() {
+	trayMu.Lock()
+	trayHidden = true
+	trayMu.Unlock()
 
-	switch runtime.GOOS {
-	case "windows":
-		cmd = "rundll32"
-		args = []string{"url.dll,FileProtocolHandler"}
-	case "darwin":
-		cmd = "open"
-	default:
-		cmd = "xdg-open"
+	HidePopup()
+	systray.SetVisible(false)
+}
+
+// RevealFromStealth restores the tray icon and shows the popup. Safe to call
+// when nothing is hidden — a second launch should surface the UI either way.
+func RevealFromStealth() {
+	trayMu.Lock()
+	wasHidden := trayHidden
+	trayHidden = false
+	trayMu.Unlock()
+
+	if wasHidden {
+		systray.SetVisible(true)
 	}
-	args = append(args, url)
-	return exec.Command(cmd, args...).Start()
+	ShowPopup()
 }

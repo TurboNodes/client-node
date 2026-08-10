@@ -19,7 +19,7 @@ The Turbo client node is a lightweight process that runs in the background and t
 
 - Download the [latest release](https://github.com/L1shed/Turbo/releases) for your platform on GitHub, or go to [our website](https://turbo-node.vercel.app/download) for easy download.
 - Open the downloaded executable — a new icon will appear in your system tray.
-- Click on the icon and select **"Connect"** to pair with your account.
+- Click the icon to open the popup, then select **"Pair to Account"**.
 
 ![img.png](.github/assets/img.png)
 - A page will open, if authentication is successful, you will be redirected to the dashboard and your new node will appear in the nodes list.
@@ -39,3 +39,20 @@ Base reward is `$0.40` per GB shared but bonuses apply such as if:
 For example, an average node shares 0.05 GB/hour of bandwidth.
 If the user owns 5 nodes on distinct devices, the total shared bandwidth is 0.25 GB/hour, which is 6 GB/day and 180 GB/month.
 At the current price rate the user is expected to earn **$72/month** + bonuses if running the nodes 24/7.
+
+## Development
+
+Run the client from a terminal and the log goes to the terminal only:
+
+```bash
+go run .
+```
+
+Launched without a terminal (the packaged app, a service manager) it also
+appends to `turbo.log` in the user config directory, since stderr has nowhere
+to go. Override with `TURBO_LOG_FILE=1` to force the file on, or `0` off.
+
+TLS certificate verification is skipped for loopback addresses, so a local
+server with a self-signed certificate works with no extra setup. For a
+self-signed server on another address, set `TURBO_INSECURE_TLS=1`. Every other
+host is verified normally.

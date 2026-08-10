@@ -2,12 +2,9 @@ package quic
 
 import (
 	"context"
-	"crypto/tls"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
-	"net"
 	"strconv"
 	"sync"
 	"time"
@@ -22,74 +19,196 @@ type Message struct {
 	Data string `json:"data,omitempty"`
 }
 
-type Connection struct {
-	conn     net.Conn
-	dataChan chan []byte
-}
-
 var (
-	quicConn    *quic.Conn
-	quicStream  *quic.Stream
-	quicMutex   sync.Mutex
-	clientConns = make(map[string]*Connection)
-	clientMutex sync.Mutex
+	quicConn   *quic.Conn
+	quicStream *quic.Stream
+	quicMutex  sync.Mutex
 )
 
-/* On disconnect:
-Waits for 5 seconds 2 times
-Then waits for 5 minutes forever
-*/
+/* Retry policy after the initial connect fails:
+1. Launch: one automatic attempt against the known/cached hosts, no fetch.
+2. If that fails: exactly one automatic GitHub refresh + reprobe.
+3. If that also fails: stop retrying automatically. From then on the loop
+   only wakes on the 5-minute heartbeat (reprobes cached hosts, no fetch)
+   or a manual Retry from the UI (RequestReconnect), which always refreshes
+   from GitHub first. A successful connection resets back to step 1 so the
+   next disconnect starts a fresh attempt. */
+
+// retryStage tracks where ConnectQuicServer is in the policy above.
+type retryStage int
+
+const (
+	stageInitial   retryStage = iota // launch, or right after a successful connection drops
+	stageAutoFetch                   // the one automatic post-failure GitHub refresh + reprobe
+	stageHeartbeat                   // automatic retries exhausted; 5-min heartbeat + manual retry only
+)
 
 func ConnectQuicServer() {
-	connectionAttempts := 0
-	retryDelay := time.Second * 4
-
-	tlsConf := &tls.Config{
-		InsecureSkipVerify: true, // Note: In production, use proper certificate validation
-		NextProtos:         []string{"turbo-proxy"},
-	}
+	const noHostRetry = 5 * time.Minute
+	const dialTimeout = 8 * time.Second
 
 	for {
-		ctx := context.Background()
-		conn, err := quic.DialAddr(ctx, "192.168.1.144:8443", tlsConf, nil)
+		setConnecting(true)
+		cache, refetched, err := ensureHosts()
 		if err != nil {
-			if connectionAttempts == 2 {
-				retryDelay = time.Minute * 5
+			log.Println("host discovery failed:", err)
+			log.Println("Retrying in 5 minutes...")
+			sleepInterruptible(noHostRetry)
+			continue
+		}
+
+		// With a preferred host, only re-probe after a successful GitHub refetch.
+		if cache.Preferred != "" {
+			if refetched {
+				if better, ok := findBetterHost(cache.Hosts, cache.Preferred); ok {
+					setPreferredHost(better)
+				} else {
+					log.Println("latency probe: preferred host remains optimal")
+				}
+			}
+			break
+		}
+
+		// No preferred yet (first launch or lost): probe after refetch, or against
+		// a stale list if GitHub is unreachable.
+		best, err := selectBestHost(cache.Hosts)
+		if err != nil {
+			log.Println("no reachable QUIC hosts:", err)
+			log.Println("Retrying in 5 minutes...")
+			sleepInterruptible(noHostRetry)
+			continue
+		}
+		setPreferredHost(best)
+		break
+	}
+
+	stage := stageInitial
+	fetchFirst := false // whether this iteration should refresh from GitHub before probing
+
+	for {
+		setConnecting(true)
+
+		if fetchFirst {
+			if _, _, refreshErr := forceRefreshHosts(); refreshErr != nil {
+				log.Println("host-servers refresh failed:", refreshErr)
+			}
+			fetchFirst = false
+		}
+
+		hosts := cachedHosts()
+		if len(hosts) == 0 {
+			cache, _, err := ensureHosts()
+			if err != nil || cache == nil || len(cache.Hosts) == 0 {
+				log.Println("no known hosts; waiting for heartbeat or manual retry...")
+				stage = stageHeartbeat
+				fetchFirst = sleepInterruptible(noHostRetry)
+				continue
+			}
+			hosts = cache.Hosts
+		}
+
+		// Race every known host in parallel so the connecting UI reflects real
+		// concurrent probing (and so a dead preferred host doesn't block the
+		// others behind a long sequential timeout).
+		results := probeHosts(hosts)
+
+		connected := false
+		if len(results) == 0 {
+			log.Println("no reachable QUIC hosts this round")
+		} else {
+			// Stick with the known-good preferred host if it answered this round;
+			// otherwise take the fastest reachable alternative for this attempt.
+			preferred := preferredHost()
+			addr := results[0].Addr
+			for _, r := range results {
+				if r.Addr == preferred {
+					addr = preferred
+					break
+				}
 			}
 
-			log.Println("Failed to connect to QUIC server. Retrying...")
-			log.Println(err)
-			time.Sleep(retryDelay)
-			connectionAttempts++
+			setConnecting(true)
+			markHostProbing(addr)
+
+			dialCtx, dialCancel := context.WithTimeout(context.Background(), dialTimeout)
+			conn, err := quic.DialAddr(dialCtx, addr, clientTLSConfig(addr), nil)
+			dialCancel()
+			if err != nil {
+				log.Printf("Failed to connect to QUIC server %s: %v", addr, err)
+				updateHostView(addr, HostDown, 0)
+			} else {
+				log.Printf("Connected to QUIC server %s", addr)
+
+				// let the server accept our bidirectional stream and register us
+				time.Sleep(100 * time.Millisecond)
+
+				// A fresh context: the dial's context was already canceled above
+				// and must not be reused here, or OpenStreamSync fails immediately
+				// with "context canceled" on every single connection attempt.
+				streamCtx, streamCancel := context.WithTimeout(context.Background(), dialTimeout)
+				stream, err := conn.OpenStreamSync(streamCtx)
+				streamCancel()
+				if err != nil {
+					log.Println("Failed to open QUIC stream:", err)
+					conn.CloseWithError(1, "failed to open stream")
+					updateHostView(addr, HostDown, 0)
+				} else {
+					if addr != preferred {
+						setPreferredHost(addr)
+					}
+
+					quicMutex.Lock()
+					quicConn = conn
+					quicStream = stream
+					quicMutex.Unlock()
+					setConnected(true)
+
+					SendMessage(&Message{Type: "dummy"})
+
+					go acceptTunnels(conn)
+					quicReader(stream)
+
+					setConnected(false)
+					log.Println("QUIC connection closed, reconnecting...")
+					connected = true
+				}
+			}
+		}
+
+		if connected {
+			// Back to a clean slate: the next disconnect gets its own fresh
+			// probe-first attempt, same as launch.
+			stage = stageInitial
+			fetchFirst = false
+			sleepInterruptible(time.Second * 5)
 			continue
 		}
-		log.Println("Connected to QUIC server")
 
-		// let the server accept our bidirectional stream and register us
-		time.Sleep(100 * time.Millisecond)
+		switch stage {
+		case stageInitial:
+			log.Println("initial connect failed; refreshing host-servers from GitHub once...")
+			stage = stageAutoFetch
+			fetchFirst = true
+		case stageAutoFetch:
+			log.Println("automatic retry exhausted; waiting for heartbeat or manual retry...")
+			stage = stageHeartbeat
+			fetchFirst = sleepInterruptible(noHostRetry)
+		default: // stageHeartbeat: keep waiting, only a manual retry triggers a fetch.
+			fetchFirst = sleepInterruptible(noHostRetry)
+		}
+	}
+}
 
-		stream, err := conn.OpenStreamSync(ctx)
+// acceptTunnels accepts the server-opened streams used for proxied
+// connections -- one per target site, separate from the control stream.
+// It returns once the connection drops, same as quicReader.
+func acceptTunnels(conn *quic.Conn) {
+	for {
+		stream, err := conn.AcceptStream(context.Background())
 		if err != nil {
-			log.Println("Failed to open QUIC stream:", err)
-			conn.CloseWithError(1, "failed to open stream")
-			time.Sleep(retryDelay)
-			connectionAttempts++
-			continue
+			return
 		}
-
-		quicMutex.Lock()
-		quicConn = conn
-		quicStream = stream
-		quicMutex.Unlock()
-		connectionAttempts = 0
-
-		SendMessage(&Message{Type: "dummy"})
-
-		quicReader(stream)
-
-		log.Println("QUIC connection closed, reconnecting...")
-
-		time.Sleep(time.Second * 5)
+		go handleTunnel(stream)
 	}
 }
 
@@ -101,13 +220,6 @@ func quicReader(stream *quic.Stream) {
 		err := decoder.Decode(&msg)
 		if err != nil {
 			log.Println("QUIC read error:", err)
-			clientMutex.Lock()
-			for id, cc := range clientConns {
-				cc.conn.Close()
-				close(cc.dataChan)
-				delete(clientConns, id)
-			}
-			clientMutex.Unlock()
 
 			quicMutex.Lock()
 			quicStream = nil
@@ -120,25 +232,6 @@ func quicReader(stream *quic.Stream) {
 		log.Printf("received %+v", msg.Type)
 
 		switch msg.Type {
-		case "connect":
-			log.Println("to-to ", msg.Addr)
-			go handleConnect(msg)
-		case "data":
-			clientMutex.Lock()
-			if cc, ok := clientConns[msg.ID]; ok {
-				if data, err := base64.StdEncoding.DecodeString(msg.Data); err == nil {
-					cc.dataChan <- data
-				}
-			}
-			clientMutex.Unlock()
-		case "close":
-			clientMutex.Lock()
-			if cc, ok := clientConns[msg.ID]; ok {
-				cc.conn.Close()
-				close(cc.dataChan)
-				delete(clientConns, msg.ID)
-			}
-			clientMutex.Unlock()
 		case "ping":
 			err := SendMessage(&Message{
 				Type: "pong",
@@ -150,6 +243,10 @@ func quicReader(stream *quic.Stream) {
 			}
 		case "pairing_url":
 			handlePairingURL(msg)
+		case "paired":
+			handlePaired(msg)
+		case "total_rewards":
+			handleTotalRewards(msg)
 		}
 	}
 }
@@ -177,16 +274,4 @@ func SendMessage(msg *Message) error {
 	}
 
 	return nil
-}
-
-func sendCloseMessage(id string) {
-	msg := Message{Type: "close", ID: id}
-	SendMessage(&msg)
-	clientMutex.Lock()
-	if cc, ok := clientConns[id]; ok {
-		cc.conn.Close()
-		close(cc.dataChan)
-		delete(clientConns, id)
-	}
-	clientMutex.Unlock()
 }

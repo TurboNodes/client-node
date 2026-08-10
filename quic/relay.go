@@ -1,26 +1,32 @@
 package quic
 
-import "encoding/base64"
+import (
+	"io"
+	"net"
+	"sync"
 
-func relayFromConnToQuic(cc *Connection, id string) {
-	buf := make([]byte, 4096)
-	for {
-		n, err := cc.conn.Read(buf)
-		if err != nil {
-			sendCloseMessage(id)
-			return
-		}
-		data := base64.StdEncoding.EncodeToString(buf[:n])
-		msg := Message{Type: "data", ID: id, Data: data}
-		SendMessage(&msg)
-	}
-}
+	"github.com/quic-go/quic-go"
+)
 
-func relayFromChanToConn(cc *Connection, id string) {
-	for data := range cc.dataChan {
-		if _, err := cc.conn.Write(data); err != nil {
-			sendCloseMessage(id)
-			return
-		}
+// relayTunnel pipes raw bytes between a dedicated QUIC stream and the target
+// TCP connection until either side closes, then closes both.
+func relayTunnel(stream *quic.Stream, target net.Conn) {
+	var once sync.Once
+	closeBoth := func() {
+		once.Do(func() {
+			stream.Close()
+			target.Close()
+		})
 	}
+
+	done := make(chan struct{})
+	go func() {
+		io.Copy(stream, target)
+		closeBoth()
+		close(done)
+	}()
+
+	io.Copy(target, stream)
+	closeBoth()
+	<-done
 }

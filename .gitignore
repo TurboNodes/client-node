@@ -1,0 +1,20 @@
+# build output
+/dist/
+/build/bin/
+/client
+/turbo
+/Turbo
+/Turbo.exe
+__debug_bin*
+
+# frontend deps/build
+node_modules/
+
+# OS / editor
+.DS_Store
+.idea/claudeCodeTabState.xml
+.idea/runConfigurations/
+.vscode/
+
+# claude worktrees (contain full checkouts)
+.claude/worktrees/

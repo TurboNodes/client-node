@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "turbo-frontend",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["vite", "frontend"],
+      "port": 5183,
+      "autoPort": true
+    }
+  ]
+}
