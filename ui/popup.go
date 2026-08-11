@@ -184,7 +184,11 @@ func handlePopupAction(action string) {
 		}
 		if err := OpenURL(url); err != nil {
 			log.Println("popup: opening pairing URL:", err)
+			return
 		}
+		// The browser now has the pairing page; leaving the popup open just
+		// blocks it from re-anchoring under the icon on the next click.
+		HidePopup()
 
 	case "retry":
 		quic.RequestReconnect()
