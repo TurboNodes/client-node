@@ -441,6 +441,13 @@ void setTooltip(char* ctooltip) {
 // getIconRect reads the status item button's window frame, which is the icon's
 // slot in the menu bar. Runs synchronously on the main thread because the
 // caller needs the answer before it can place a window.
+//
+// The frame is only meaningful once the menu bar has actually placed the item.
+// For the first ~200ms after the status item is created it sits at the origin
+// with a placeholder size, entirely off-screen — reporting that as the icon's
+// position anchored the popup to the bottom-left corner of the display. A
+// window that is not on any screen has no position worth reporting, so this
+// says so and lets the caller wait or fall back.
 void getIconRect(double* x, double* y, double* w, double* h, int* valid) {
   void (^read)(void) = ^{
     SystrayAppDelegate *d = (SystrayAppDelegate *)[NSApp delegate];
@@ -450,6 +457,19 @@ void getIconRect(double* x, double* y, double* w, double* h, int* valid) {
       return;
     }
     NSRect f = [win frame];
+    BOOL placed = NO;
+    if (!NSIsEmptyRect(f)) {
+      for (NSScreen *screen in [NSScreen screens]) {
+        if (NSContainsRect([screen frame], f)) {
+          placed = YES;
+          break;
+        }
+      }
+    }
+    if (!placed) {
+      *valid = 0;
+      return;
+    }
     *x = f.origin.x;
     *y = f.origin.y;
     *w = f.size.width;

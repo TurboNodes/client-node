@@ -9,7 +9,17 @@ package ui
 #include <stdlib.h>
 */
 import "C"
-import "unsafe"
+import (
+	"time"
+	"unsafe"
+)
+
+// anchorWait is how long a show waits for the menu bar to place the status
+// item before giving up and anchoring to the pointer. Placement takes a couple
+// of hundred milliseconds after the tray is created; the ceiling is generous
+// because it is only ever reached when something is badly wrong, and until then
+// the popup would be opening at the corner of the screen.
+const anchorWait = 2 * time.Second
 
 func initPopup(html string) {
 	chtml := C.CString(html)

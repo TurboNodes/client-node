@@ -29,8 +29,9 @@ func main() {
 
 	// Before anything with side effects: a second launch must not open its own
 	// QUIC session or add a second tray icon. It hands the reveal request to
-	// the running instance and exits.
-	primary, err := singleinstance.Acquire(ui.RevealFromStealth)
+	// the running instance and exits — unless the service manager started it,
+	// in which case nobody asked to see anything and it just exits.
+	primary, err := singleinstance.Acquire(ui.RevealFromStealth, !autostart.StartedByService())
 	if err != nil {
 		log.Println("single instance:", err)
 	}

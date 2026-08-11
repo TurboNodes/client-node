@@ -6,6 +6,7 @@ import (
 	"log"
 	"runtime"
 	"sync"
+	"time"
 	"unsafe"
 
 	"github.com/wailsapp/go-webview2/pkg/edge"
@@ -17,6 +18,14 @@ const (
 	popupHeight  = 400
 	screenMargin = 8
 )
+
+// anchorWait is how long a show waits for the shell to report where it drew
+// the tray icon before falling back to the pointer. It covers the moments
+// right after startup when the icon is not on screen yet. Shorter than macOS's
+// because the failure here is not always temporary — an icon tucked into the
+// notification-area overflow flyout has no rectangle to report, ever — and
+// that case should not sit waiting on every open.
+const anchorWait = time.Second
 
 var (
 	user32 = windows.NewLazySystemDLL("user32.dll")

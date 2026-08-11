@@ -9,13 +9,19 @@ import (
 	"path/filepath"
 )
 
+// Restart=on-failure, not always: the desktop app exits on purpose when the
+// user quits it, and when a second launch hands off to the instance already
+// running. Restarting those brings the app back from the dead every few
+// seconds — and since each relaunch asks the running instance to show its
+// popup, the popup opens on its own, over and over. See AutostartFlag for the
+// other half of that fix.
 const serviceTemplate = `[Unit]
 Description=Turbo
 After=network.target
 
 [Service]
-ExecStart=/usr/local/bin/Turbo
-Restart=always
+ExecStart=/usr/local/bin/Turbo ` + AutostartFlag + `
+Restart=on-failure
 User=%s
 Environment=PATH=/usr/local/bin:/usr/bin
 WorkingDirectory=%s

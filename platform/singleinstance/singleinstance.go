@@ -20,14 +20,25 @@ const showCommand = "show"
 // Acquire tries to become the primary instance.
 //
 // If it succeeds it returns true and calls onShow whenever another launch asks
-// the UI to be revealed. If another instance already holds the channel it sends
-// the show request to it and returns false — the caller must then exit
-// immediately, before starting QUIC or a tray icon.
-func Acquire(onShow func()) (bool, error) {
+// the UI to be revealed. If another instance already holds the channel it
+// returns false — the caller must then exit immediately, before starting QUIC
+// or a tray icon — and, when askToShow is set, first asks the running instance
+// to surface.
+//
+// askToShow is what a launch by a person means: they went looking for the app,
+// so the one already running should show itself. A launch nobody asked for —
+// the service manager starting the app at login or after a crash — passes
+// false, because popping the UI open in front of whatever the user is doing is
+// not a reasonable answer to that.
+func Acquire(onShow func(), askToShow bool) (bool, error) {
 	ln, err := listen()
 	if err == nil {
 		go serve(ln, onShow)
 		return true, nil
+	}
+
+	if !askToShow {
+		return false, nil
 	}
 
 	// Someone holds it. Ask them to surface, then report that we are secondary.

@@ -169,9 +169,12 @@ func SetVisible(visible bool) {
 
 // IconRect reports the tray icon's rectangle in screen coordinates, in the
 // platform's own coordinate space (Cocoa's bottom-left origin on macOS,
-// top-left pixels on Windows). ok is false when the platform cannot report it,
-// which is the case on Linux: a StatusNotifierItem is drawn by the desktop
-// environment and its geometry is never sent back over the bus.
+// top-left pixels on Windows). ok is false when the platform cannot report it:
+// always on Linux, where a StatusNotifierItem is drawn by the desktop
+// environment and its geometry is never sent back over the bus, and for a
+// short moment after startup elsewhere, until the icon has actually been
+// placed. A caller that wants the icon and not the pointer should retry for a
+// little while rather than treat the first no as final.
 //
 // Added for Turbo, so a popup can be anchored to the icon rather than to the
 // pointer. Not part of upstream fyne.io/systray.

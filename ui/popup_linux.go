@@ -10,6 +10,12 @@ package ui
 import "C"
 import "unsafe"
 
+// anchorWait is zero here: a StatusNotifierItem is drawn by the desktop
+// environment, which never reports its geometry back over the bus, so there is
+// nothing to wait for. The popup goes to the pointer, which on a click is on
+// the icon anyway.
+const anchorWait = 0
+
 func initPopup(html string) {
 	chtml := C.CString(html)
 	defer C.free(unsafe.Pointer(chtml))

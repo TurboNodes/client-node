@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"fyne.io/systray"
@@ -65,6 +66,7 @@ func StartPopup(quit, hide func()) {
 	onHide = hide
 
 	initPopup(popupHTML)
+	warmAnchor()
 	watchQuicState()
 	quic.OnJustPaired(showPopupForPairing)
 }
@@ -72,15 +74,13 @@ func StartPopup(quit, hide func()) {
 // TogglePopup shows the popup anchored to the tray icon, or hides it if shown.
 func TogglePopup() {
 	cancelAutoHide()
-	refreshAnchor()
-	togglePopup()
+	showAnchored(togglePopup)
 }
 
 // ShowPopup shows the popup if it is not already visible.
 func ShowPopup() {
 	cancelAutoHide()
-	refreshAnchor()
-	showPopup()
+	showAnchored(showPopup)
 }
 
 // showPopupForPairing opens the popup to announce a just-completed pairing —
@@ -116,17 +116,138 @@ func cancelAutoHide() {
 	}
 }
 
-// refreshAnchor re-reads where the tray icon currently is, right before the
-// popup is placed. The icon slides along the menu bar or taskbar as other
-// icons appear and disappear, so a position captured at startup would be
-// stale by the time it mattered.
-func refreshAnchor() {
-	x, y, w, _, ok := systray.IconRect()
-	if !ok {
-		setPopupAnchor(0, 0, false)
+// showAnchored anchors the popup to the tray icon and then runs show.
+//
+// A freshly created tray icon does not have a position yet, and for a moment
+// it has a misleading one: macOS drops the status item at the right-hand end
+// of the menu bar and slides it to its real slot a beat later, and Windows
+// cannot locate an icon the shell has not drawn. A show landing in that window
+// — the first launch, where the popup opens on its own as soon as pairing
+// completes — anchored to the pointer or to the icon's momentary position, so
+// the popup came up nowhere near where it belonged. Waiting for the icon to
+// settle costs a few hundred milliseconds, once, on a popup nobody clicked to
+// open; every later show reads the settled position and opens immediately.
+func showAnchored(show func()) {
+	// Once the icon has been given its chance to settle, its position is read
+	// live and used for what it is: it still moves as other icons come and go,
+	// and a platform that cannot report it at all (Linux, or a Windows icon
+	// tucked into the overflow flyout) must not turn every open into a wait.
+	if anchorSettleDone.Load() || anchorWait == 0 {
+		if !refreshAnchor() {
+			setPopupAnchor(0, 0, false)
+		}
+		show()
 		return
 	}
-	setPopupAnchor(x+w/2, y, true)
+	// Off this thread: shows are triggered from the tray's click handler and
+	// from the webview's message handler, and on every platform at least one
+	// of those is the thread that would have to run the native show.
+	go func() {
+		settleAnchor()
+		show()
+	}()
+}
+
+const (
+	// anchorPollInterval is how often the tray is asked where its icon is
+	// while waiting for the answer to settle.
+	anchorPollInterval = 25 * time.Millisecond
+
+	// anchorStablePeriod is how long the icon has to stay put before its
+	// position is believed. Comfortably longer than the slide from where a new
+	// status item first appears to where it ends up, which is the reading that
+	// has to be waited out rather than used.
+	anchorStablePeriod = 200 * time.Millisecond
+)
+
+var (
+	// anchorSettleDone records that the tray icon has already been given its
+	// one chance to settle, however that turned out, so no later show waits
+	// again.
+	anchorSettleDone atomic.Bool
+
+	// settleMu keeps concurrent shows from each running their own wait.
+	settleMu sync.Mutex
+)
+
+// warmAnchor waits out the tray icon's opening shuffle in the background, so
+// that by the time anything asks for the popup the position is already known.
+func warmAnchor() {
+	if anchorWait == 0 {
+		return
+	}
+	go settleAnchor()
+}
+
+// forgetAnchor discards what was learnt about the icon's position. Stealth
+// mode tears the icon out of the tray, and the one that comes back has to be
+// found again from scratch.
+func forgetAnchor() {
+	anchorSettleDone.Store(false)
+}
+
+// settleAnchor waits for the tray icon to hold the same position for
+// anchorStablePeriod and hands it to the popup, giving up after anchorWait and
+// leaving the pointer as the anchor. Either way the wait has now happened.
+func settleAnchor() {
+	settleMu.Lock()
+	defer settleMu.Unlock()
+
+	// Another show already waited this out while this one queued behind it.
+	if anchorSettleDone.Load() {
+		if !refreshAnchor() {
+			setPopupAnchor(0, 0, false)
+		}
+		return
+	}
+	defer anchorSettleDone.Store(true)
+
+	var (
+		prev   anchor
+		hadOne bool
+		stable time.Duration
+	)
+	for deadline := time.Now().Add(anchorWait); time.Now().Before(deadline); {
+		current, ok := readAnchor()
+		if ok && hadOne && current == prev {
+			stable += anchorPollInterval
+		} else {
+			stable = 0
+		}
+		prev, hadOne = current, ok
+
+		if ok && stable >= anchorStablePeriod {
+			setPopupAnchor(current.centerX, current.bottomY, true)
+			return
+		}
+		time.Sleep(anchorPollInterval)
+	}
+	setPopupAnchor(0, 0, false)
+}
+
+// anchor is where the popup hangs from: the horizontal centre of the tray icon
+// and the edge of the menu bar or taskbar slot it sits in.
+type anchor struct{ centerX, bottomY float64 }
+
+func readAnchor() (anchor, bool) {
+	x, y, w, _, ok := systray.IconRect()
+	if !ok {
+		return anchor{}, false
+	}
+	return anchor{centerX: x + w/2, bottomY: y}, true
+}
+
+// refreshAnchor re-reads where the tray icon currently is, right before the
+// popup is placed, and reports whether the platform could say. The icon slides
+// along the menu bar or taskbar as other icons appear and disappear, so a
+// position captured at startup would be stale by the time it mattered.
+func refreshAnchor() bool {
+	current, ok := readAnchor()
+	if !ok {
+		return false
+	}
+	setPopupAnchor(current.centerX, current.bottomY, true)
+	return true
 }
 
 // HidePopup hides the popup if it is visible.

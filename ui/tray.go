@@ -62,6 +62,9 @@ func HideToStealth() {
 
 	HidePopup()
 	systray.SetVisible(false)
+	// The icon that comes back is a new one, placed from scratch: where this
+	// one sat says nothing about where that one will.
+	forgetAnchor()
 }
 
 // RevealFromStealth restores the tray icon and shows the popup. Safe to call
