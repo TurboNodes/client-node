@@ -223,6 +223,25 @@
   }
   .rewards-note { font-size: 0.68rem; color: var(--dim); }
 
+  .connected-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 12px;
+    font-size: 0.68rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--up);
+  }
+  .connected-dot {
+    width: 6px; height: 6px;
+    border-radius: 9999px;
+    background: var(--up);
+    box-shadow: 0 0 6px rgba(74, 222, 128, 0.7);
+    animation: breathe 2s ease-in-out infinite;
+  }
+  @keyframes breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
   /* ---- buttons ---------------------------------------------------------- */
   .btn {
     display: inline-flex;
@@ -302,6 +321,7 @@
         <span class="rewards-label">Total earned</span>
         <span id="rewards" class="rewards-value">$0.00</span>
         <span class="rewards-note">This node</span>
+        <span class="connected-indicator"><span class="connected-dot"></span>Connected</span>
       </div>
       <button id="dashboard" type="button" class="btn is-muted">Open Dashboard</button>
     </section>
@@ -433,6 +453,11 @@
   document.getElementById("pair").addEventListener("click", function () { send("pair"); });
   document.getElementById("dashboard").addEventListener("click", function () { send("dashboard"); });
   document.getElementById("close").addEventListener("click", function () { send("close"); });
+
+  // Tells the native side the popup is being read, so a just-paired auto-show
+  // does not close itself out from under the user. { once: true } is enough —
+  // the first hover already cancelled the auto-hide there is to cancel.
+  document.addEventListener("mouseover", function () { send("hover"); }, { once: true });
 
   // Called natively just before the window is hidden. A selection left behind
   // would still be highlighted the next time the popup opens, and on macOS a

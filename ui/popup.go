@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"log"
 	"sync"
+	"time"
 
 	"fyne.io/systray"
 )
@@ -16,6 +17,11 @@ var popupHTML string
 // dashboardURL is where the connected view's "Open Dashboard" button sends
 // the user's browser.
 const dashboardURL = "https://turbo-node.vercel.app/dashboard"
+
+// pairedAutoHideDelay is how long the popup stays open on its own after
+// popping up to announce a fresh pairing, if the user never clicks or hovers
+// it — same idea as a notification toast.
+const pairedAutoHideDelay = 8 * time.Second
 
 // View names understood by the embedded UI.
 const (
@@ -45,6 +51,11 @@ var (
 	// menu take exactly the same path out.
 	onQuit func()
 	onHide func()
+
+	// autoHideMu guards the pending auto-hide timer armed after a just-paired
+	// auto-show. There is at most one at a time.
+	autoHideMu    sync.Mutex
+	autoHideTimer *time.Timer
 )
 
 // StartPopup builds the popup window and starts mirroring quic state into it.
@@ -55,18 +66,54 @@ func StartPopup(quit, hide func()) {
 
 	initPopup(popupHTML)
 	watchQuicState()
+	quic.OnJustPaired(showPopupForPairing)
 }
 
 // TogglePopup shows the popup anchored to the tray icon, or hides it if shown.
 func TogglePopup() {
+	cancelAutoHide()
 	refreshAnchor()
 	togglePopup()
 }
 
 // ShowPopup shows the popup if it is not already visible.
 func ShowPopup() {
+	cancelAutoHide()
 	refreshAnchor()
 	showPopup()
+}
+
+// showPopupForPairing opens the popup to announce a just-completed pairing —
+// the one time this happens without the user having clicked anything — and
+// arms an auto-hide so a notification nobody is reading does not just sit
+// there forever. Any hover or click on the popup, from handlePopupAction,
+// cancels it: past that point it behaves like any other manual open.
+func showPopupForPairing() {
+	ShowPopup()
+	armAutoHide(pairedAutoHideDelay)
+}
+
+func armAutoHide(d time.Duration) {
+	autoHideMu.Lock()
+	defer autoHideMu.Unlock()
+	if autoHideTimer != nil {
+		autoHideTimer.Stop()
+	}
+	autoHideTimer = time.AfterFunc(d, func() {
+		autoHideMu.Lock()
+		autoHideTimer = nil
+		autoHideMu.Unlock()
+		HidePopup()
+	})
+}
+
+func cancelAutoHide() {
+	autoHideMu.Lock()
+	defer autoHideMu.Unlock()
+	if autoHideTimer != nil {
+		autoHideTimer.Stop()
+		autoHideTimer = nil
+	}
 }
 
 // refreshAnchor re-reads where the tray icon currently is, right before the
@@ -84,6 +131,7 @@ func refreshAnchor() {
 
 // HidePopup hides the popup if it is visible.
 func HidePopup() {
+	cancelAutoHide()
 	hidePopup()
 }
 
@@ -179,7 +227,17 @@ func CurrentStateJSON() string {
 // handlePopupAction dispatches an action name sent by the UI. Called from the
 // platform webview bridges, on whatever thread they use.
 func handlePopupAction(action string) {
+	// Any real interaction — a hover or a click on something — cancels a
+	// pending just-paired auto-hide. "ready" is the page announcing it
+	// finished loading, not the user doing anything, so it does not count.
+	if action != "ready" {
+		cancelAutoHide()
+	}
+
 	switch action {
+	case "hover":
+		// No further action: cancelling the timer above is the whole point.
+
 	case "pair":
 		url := quic.PairingURL()
 		if url == "" {

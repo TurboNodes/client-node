@@ -18,11 +18,16 @@ const (
 
 type pairingListener func(status PairingStatus, url string)
 
+// justPairedListener fires only on the transition into PairingDone, never on
+// a message that finds the node already there. See handlePaired.
+type justPairedListener func()
+
 var (
-	pairingMu        sync.Mutex
-	pairingURL       string
-	pairingStatus    = PairingUnknown
-	pairingListeners []pairingListener
+	pairingMu           sync.Mutex
+	pairingURL          string
+	pairingStatus       = PairingUnknown
+	pairingListeners    []pairingListener
+	justPairedListeners []justPairedListener
 )
 
 // PairingURL is the latest connect URL received from the server.
@@ -54,6 +59,24 @@ func OnPairingChange(fn pairingListener) {
 	if status != PairingUnknown {
 		fn(status, url)
 	}
+}
+
+// OnJustPaired registers a listener for the moment this node newly becomes
+// paired — never for a "paired" message that just reconfirms it.
+//
+// The server resends "paired" on every reconnect of an already-paired node
+// (a fresh per-connection watcher on its side, with no memory of what it told
+// the previous connection), which is normal and not news to the user. Only
+// the transition from not-paired is: the one time pairing actually just
+// happened. Unlike OnPairingChange, an already-paired node does not get an
+// immediate call on registration — there is no transition to report yet.
+func OnJustPaired(fn justPairedListener) {
+	if fn == nil {
+		return
+	}
+	pairingMu.Lock()
+	justPairedListeners = append(justPairedListeners, fn)
+	pairingMu.Unlock()
 }
 
 // restorePaired marks the node as paired from persisted state at startup, so
@@ -88,8 +111,13 @@ func handlePairingURL(msg Message) {
 // Supabase, so the payload is ignored and only the state is kept.
 func handlePaired(msg Message) {
 	pairingMu.Lock()
+	wasPaired := pairingStatus == PairingDone
 	pairingStatus = PairingDone
 	listeners := append([]pairingListener(nil), pairingListeners...)
+	var justPaired []justPairedListener
+	if !wasPaired {
+		justPaired = append([]justPairedListener(nil), justPairedListeners...)
+	}
 	url := pairingURL
 	pairingMu.Unlock()
 
@@ -97,5 +125,8 @@ func handlePaired(msg Message) {
 
 	for _, fn := range listeners {
 		fn(PairingDone, url)
+	}
+	for _, fn := range justPaired {
+		fn()
 	}
 }
