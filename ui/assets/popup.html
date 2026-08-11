@@ -303,6 +303,7 @@
         <span id="rewards" class="rewards-value">$0.00</span>
         <span class="rewards-note">This node</span>
       </div>
+      <button id="dashboard" type="button" class="btn is-muted">Open Dashboard</button>
     </section>
   </div>
 
@@ -430,6 +431,7 @@
   });
 
   document.getElementById("pair").addEventListener("click", function () { send("pair"); });
+  document.getElementById("dashboard").addEventListener("click", function () { send("dashboard"); });
   document.getElementById("close").addEventListener("click", function () { send("close"); });
 
   // Called natively just before the window is hidden. A selection left behind

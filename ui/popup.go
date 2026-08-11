@@ -13,6 +13,10 @@ import (
 //go:embed assets/popup.html
 var popupHTML string
 
+// dashboardURL is where the connected view's "Open Dashboard" button sends
+// the user's browser.
+const dashboardURL = "https://turbo-node.vercel.app/dashboard"
+
 // View names understood by the embedded UI.
 const (
 	ViewPairing    = "pairing"
@@ -188,6 +192,13 @@ func handlePopupAction(action string) {
 		}
 		// The browser now has the pairing page; leaving the popup open just
 		// blocks it from re-anchoring under the icon on the next click.
+		HidePopup()
+
+	case "dashboard":
+		if err := OpenURL(dashboardURL); err != nil {
+			log.Println("popup: opening dashboard:", err)
+			return
+		}
 		HidePopup()
 
 	case "retry":
