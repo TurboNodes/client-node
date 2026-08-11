@@ -154,3 +154,70 @@ jobs:
         files: dist/${{ matrix.asset_name }}
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # The headless node (cmd/turbod), which is what the website's terminal
+  # install command downloads. Separate from the desktop job above because it
+  # shares almost none of it: no cgo, no GTK/WebKit, no tray, no DMG or
+  # installer — just a static binary per platform. Windows is omitted: the
+  # install script is POSIX shell, and Windows gets autostart from its own
+  # installer instead.
+  build-headless:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            asset_name: turbod_linux-amd64
+
+          - os: ubuntu-24.04-arm
+            goos: linux
+            goarch: arm64
+            asset_name: turbod_linux-arm64
+
+          - os: macos-15-intel
+            goos: darwin
+            goarch: amd64
+            asset_name: turbod_macos-amd64
+
+          - os: macos-latest
+            goos: darwin
+            goarch: arm64
+            asset_name: turbod_macos-arm64
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version-file: go.mod
+        cache: true
+
+    - name: Build turbod
+      env:
+        GOOS: ${{ matrix.goos }}
+        GOARCH: ${{ matrix.goarch }}
+        CGO_ENABLED: 0
+      run: |
+        mkdir -p dist
+        go build -trimpath -ldflags="-s -w" -o dist/${{ matrix.asset_name }} ./cmd/turbod
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.asset_name }}
+        path: dist/${{ matrix.asset_name }}
+        if-no-files-found: error
+
+    - name: Upload Release Asset
+      if: github.event_name == 'release'
+      uses: softprops/action-gh-release@v2
+      with:
+        files: dist/${{ matrix.asset_name }}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

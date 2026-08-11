@@ -1,6 +1,7 @@
 package quic
 
 import (
+	"client/platform/config"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -17,6 +18,10 @@ type Message struct {
 	ID   string `json:"id"`
 	Addr string `json:"addr,omitempty"`
 	Data string `json:"data,omitempty"`
+	// Token carries a single-use install token on "hello" — see
+	// config.PairToken. Empty on every other message, and on every node that
+	// was not installed from the website's terminal command.
+	Token string `json:"token,omitempty"`
 }
 
 var (
@@ -163,7 +168,20 @@ func ConnectQuicServer() {
 					quicMutex.Unlock()
 					setConnected(true)
 
-					SendMessage(&Message{Type: "dummy"})
+					// Must be the first write on the stream: the server blocks the
+					// rest of this session's handling on reading it before anything
+					// else, so it can key pairing/earnings on a stable identity
+					// instead of the connection's (possibly reused) source IP.
+					//
+					// Token is usually empty. It is set only for an install that
+					// came from the website's terminal command, and only until the
+					// server claims it — pairing this node to that account without
+					// anyone opening a browser here.
+					SendMessage(&Message{
+						Type:  "hello",
+						Data:  config.DeviceID(),
+						Token: config.PairToken(),
+					})
 
 					go acceptTunnels(conn)
 					quicReader(stream)

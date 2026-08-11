@@ -150,10 +150,30 @@ func watchQuicState() {
 	quic.OnConnectionChange(func(bool) { requestPublish() })
 	quic.OnConnectingChange(func(bool) { requestPublish() })
 	quic.OnHostsChange(func([]quic.HostProbeView) { requestPublish() })
-	quic.OnPairingChange(func(quic.PairingStatus, string) { requestPublish() })
+	quic.OnPairingChange(func(status quic.PairingStatus, url string) {
+		requestPublish()
+		if status == quic.PairingNeeded && url != "" {
+			openPairingURL(url)
+		}
+	})
 	quic.OnRewardsChange(func(string) { requestPublish() })
 
 	requestPublish()
+}
+
+// openPairingURL opens a freshly minted pairing link. Every non-empty
+// pairing_url the client ever receives is a direct, one-to-one response to a
+// RequestPairing call — the server never sends a real link unprompted — so it
+// is safe to open it automatically here rather than routing back through
+// another click.
+func openPairingURL(url string) {
+	if err := OpenURL(url); err != nil {
+		log.Println("popup: opening pairing URL:", err)
+		return
+	}
+	// The browser now has the pairing page; leaving the popup open just
+	// blocks it from re-anchoring under the icon on the next click.
+	HidePopup()
 }
 
 // requestPublish marks the UI stale. Never blocks: a pending rebuild already
@@ -239,18 +259,10 @@ func handlePopupAction(action string) {
 		// No further action: cancelling the timer above is the whole point.
 
 	case "pair":
-		url := quic.PairingURL()
-		if url == "" {
-			log.Println("popup: pair requested but no pairing URL yet")
-			return
-		}
-		if err := OpenURL(url); err != nil {
-			log.Println("popup: opening pairing URL:", err)
-			return
-		}
-		// The browser now has the pairing page; leaving the popup open just
-		// blocks it from re-anchoring under the icon on the next click.
-		HidePopup()
+		// The link is minted on demand and arrives asynchronously — see
+		// openPairingURL, which opens it the moment it lands. Nothing to do
+		// here but ask.
+		quic.RequestPairing()
 
 	case "dashboard":
 		if err := OpenURL(dashboardURL); err != nil {

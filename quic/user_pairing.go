@@ -1,6 +1,8 @@
 package quic
 
 import (
+	"client/platform/config"
+	"log"
 	"sync"
 )
 
@@ -79,6 +81,22 @@ func OnJustPaired(fn justPairedListener) {
 	pairingMu.Unlock()
 }
 
+// RequestPairing asks the server to start (or resume) actively watching for
+// this node's pairing and to mint a connect link if one is not already live.
+// The server never sends a real link unprompted — see quic/pairing.go on the
+// server — so this is the only thing that makes one appear; the link itself
+// arrives asynchronously as a later "pairing_url" message (see ui/popup.go's
+// OnPairingChange callback, which opens it automatically once it lands).
+//
+// Called when the user clicks "Pair to Account". Safe to call any time the
+// connection is up — while already paired or already mid-attempt it is a
+// harmless no-op or resend on the server's side.
+func RequestPairing() {
+	if err := SendMessage(&Message{Type: "pairing"}); err != nil {
+		log.Println("pairing request:", err)
+	}
+}
+
 // restorePaired marks the node as paired from persisted state at startup, so
 // the popup can show the connected view without waiting for the server. Lives
 // here rather than in rewards.go so pairingStatus is only ever touched under
@@ -110,6 +128,13 @@ func handlePairingURL(msg Message) {
 // used to carry Supabase session tokens; the client no longer speaks to
 // Supabase, so the payload is ignored and only the state is kept.
 func handlePaired(msg Message) {
+	// Whatever pairing this node, an install token has no further use: it is
+	// single-use, so the server would refuse it from here on anyway. Dropping
+	// it on every "paired" rather than only on the transition keeps this
+	// simple and is harmless — removing a file that is already gone is a
+	// no-op, and that is the case for all but the first time.
+	config.ClearPairToken()
+
 	pairingMu.Lock()
 	wasPaired := pairingStatus == PairingDone
 	pairingStatus = PairingDone
