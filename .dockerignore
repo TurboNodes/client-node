@@ -1,0 +1,11 @@
+.git/
+.claude/
+.github/
+.idea/
+.vscode/
+.DS_Store
+build/
+dist/
+ui/
+assets/
+*.md
