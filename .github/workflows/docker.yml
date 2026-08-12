@@ -1,16 +1,10 @@
 name: Docker Image
 
+# Disabled: the image is no longer published automatically. Only a manual run
+# from the Actions tab builds and pushes to GHCR. Restore the push/pull_request/
+# release triggers to turn automatic publishing back on.
 on:
-  push:
-    branches: [ main ]
-    paths-ignore:
-      - README.md
-  pull_request:
-    branches: [ main ]
-    paths-ignore:
-      - README.md
-  release:
-    types: [published]
+  workflow_dispatch:
 
 permissions:
   contents: read

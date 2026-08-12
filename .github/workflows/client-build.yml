@@ -111,7 +111,57 @@ jobs:
         
         mkdir -p build/Turbo.app/Contents/MacOS
         cp build/${{ matrix.output_name }} build/Turbo.app/Contents/MacOS/Turbo
-        
+
+    # Unsigned, the bundle carries only the ad-hoc signature the linker leaves
+    # on an arm64 Mach-O and has no _CodeSignature/CodeResources at all, so
+    # codesign reports "code has no resources but signature indicates they must
+    # be present". Gatekeeper rejects that, and on a quarantined download —
+    # which is every download from the website — macOS phrases the rejection as
+    # "Turbo.app is damaged and can't be opened". Signing here is what makes a
+    # downloaded build launchable at all, not a hardening extra.
+    - name: Sign macOS app
+      if: matrix.goos == 'darwin'
+      env:
+        MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+        MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+      run: |
+        if [ -z "$MACOS_CERT_P12" ]; then
+          # No Developer ID configured: sign ad-hoc. That clears "damaged"; the
+          # first launch still needs right-click > Open, which only a Developer
+          # ID plus notarization removes.
+          echo "No MACOS_CERT_P12 secret set — signing ad-hoc."
+          codesign --force --sign - --identifier me.lished.turbo build/Turbo.app
+        else
+          # A throwaway keychain: the runner's login keychain is locked, and
+          # codesign needs an unlocked one holding the identity.
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          echo "$MACOS_CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" \
+            -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign
+          # Without this codesign blocks on a GUI prompt no one can answer.
+          security set-key-partition-list -S apple-tool:,apple: \
+            -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" > /dev/null
+          security list-keychain -d user -s "$KEYCHAIN" login.keychain-db
+          rm -f "$RUNNER_TEMP/cert.p12"
+
+          # --options runtime is required for notarization to be accepted.
+          codesign --force --timestamp --options runtime \
+            --sign "$MACOS_SIGN_IDENTITY" build/Turbo.app
+        fi
+
+        # Fail the build rather than ship a bundle that repeats the bug.
+        codesign --verify --strict --verbose=2 build/Turbo.app
+
+    # Split from the build step so the DMG is always packaged from the signed
+    # bundle: signing after packaging would leave the shipped copy unsigned.
+    - name: Package macOS DMG
+      if: matrix.goos == 'darwin'
+      run: |
         brew install create-dmg || true
         mkdir -p dist
         create-dmg \
@@ -127,6 +177,37 @@ jobs:
           "build/Turbo.app" || cp -r build/Turbo.app "dist/Turbo.app"
 
         cp -r build/Turbo.app "dist/Turbo.app"
+
+    # Notarization is what lets a downloaded DMG open with no warning at all.
+    # It no-ops when the secrets are absent, so the ad-hoc path above remains a
+    # complete build on its own.
+    - name: Notarize macOS DMG
+      if: matrix.goos == 'darwin'
+      env:
+        MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+        MACOS_NOTARY_APPLE_ID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
+        MACOS_NOTARY_PASSWORD: ${{ secrets.MACOS_NOTARY_PASSWORD }}
+        MACOS_NOTARY_TEAM_ID: ${{ secrets.MACOS_NOTARY_TEAM_ID }}
+      run: |
+        if [ -z "$MACOS_NOTARY_APPLE_ID" ]; then
+          echo "No notarization secrets set — skipping."
+          exit 0
+        fi
+
+        # The DMG is the file users download, so it is quarantined on arrival
+        # and needs its own signature, not just the app inside it.
+        codesign --force --timestamp --sign "$MACOS_SIGN_IDENTITY" \
+          "dist/${{ matrix.asset_name }}"
+
+        xcrun notarytool submit "dist/${{ matrix.asset_name }}" \
+          --apple-id "$MACOS_NOTARY_APPLE_ID" \
+          --password "$MACOS_NOTARY_PASSWORD" \
+          --team-id "$MACOS_NOTARY_TEAM_ID" \
+          --wait
+
+        # Staple the ticket into the DMG so the first launch works offline.
+        xcrun stapler staple "dist/${{ matrix.asset_name }}"
+        xcrun stapler validate "dist/${{ matrix.asset_name }}"
 
     - name: Stage release asset
       if: matrix.goos != 'darwin'
